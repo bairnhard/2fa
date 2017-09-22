@@ -3,8 +3,11 @@ package main
 // 2fa = two factor authentication service
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -27,24 +30,17 @@ type Result struct { //this is how the token looks like
 	Expiry time.Time `json:"expiry"`
 }
 
-type SMS4amsg struct {
-	Messages []struct {
-		Recipients []struct {
-			Dst string `json:"dst"`
-		} `json:"recipients"`
-		Text string `json:"text"`
-	} `json:"messages"`
+type Recipients struct {
+	Dst string `json:"dst"`
 }
 
-/* type SMS4amsg struct { //sms message struct
-	Messages struct {
-		Text       string `json:"text"`
-		Recipients struct {
-			Dst string `json:"dst"`
-		} `json:"recipients"`
-	} `json:"messages"`
+type Messages struct {
+	Text        string       `json:"text"`
+	Rrecipients []Recipients `json:"recipients"`
 }
-*/
+type SMS4amsg struct {
+	Mmessages []Messages `json:"messages"`
+}
 
 func main() {
 
@@ -94,38 +90,66 @@ func sendmessage(dest *gin.Context) {
 	}
 	defer status.Body.Close()
 
-	// fmt.Println(status)
-	// fmt.Println(destnum)
-	dest.String(200, "%v", status)
+	if status.StatusCode != 200 {
+		log.Fatalln(time.Now(), "SMS Rest API Error, Status code: ", status.StatusCode)
+	}
+	// dest.String(200, "%v", status)
+
+	// Building SMS Message
+	arecipient := []Recipients{{destnum}}
+	amessages := []Messages{{"Ich kann SMS per API schicken...", arecipient}} //this is the SMS Json Object
+	asms := SMS4amsg{amessages}
+	fmt.Println("arecipient:", arecipient)
+	fmt.Println("amessages:", amessages)
+	fmt.Println("sms:", asms)
 
 	//http post message
-	var msg SMS4amsg
+	// first we build the request
+	jsonStr, errs := json.Marshal(asms)
+	if errs != nil {
+		log.Println(time.Now(), errs)
+	}
 
-	msg = SMS4amsg{messages: {text: "hello", destnum: {dst: destnum}}}
+	req, err := http.NewRequest("POST", url+"jobs", bytes.NewBuffer(jsonStr))
+	fmt.Println(req)
 
-	dest.IndentedJSON(200, msg)
-
-	client := &http.Client{}
-
-	req, err := http.NewRequest("POST", url+"jobs", nil)
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
-	req.SetBasicAuth(rUser, rPwd)
+	req.SetBasicAuth(rUser, rPwd) //we're precise and set all neccessary headers, just in case
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("charset", "utf-8")
+	defer req.Body.Close()
+
+	client := &http.Client{}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
-	fmt.Println("request :", resp)
 
+	//http response...
 	defer req.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	bd := string(body[:])
+	log.Println(time.Now(), "JobID: ", bd)
+
+	if err != nil {
+		log.Println(time.Now(), err)
+	}
+
 }
 
 func maketoken(q *gin.Context) {
 
 	qlen, _ := q.GetQuery("length") //how long should it be
 	qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
+	qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
+
+	qex, _ := time.ParseDuration(qexp)
+	if qexp == "" {
+		qex = 5 * time.Minute
+	}
 
 	var LetterBytes string
 
@@ -153,22 +177,23 @@ func maketoken(q *gin.Context) {
 	fmt.Println("len: ", tokenlength)
 	fmt.Println("type: ", qtype)
 	fmt.Println("LetterBytes", LetterBytes)
+	fmt.Println("lifespan: ", qex)
 	// const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-	var ergebnis []Result
-	ergebnis = make([]Result, 10)
+	var ergebnis Result
+	// ergebnis = make([]Result, 10)
 
-	for loop := 0; loop < 10; loop++ {
+	// for loop := 0; loop < 10; loop++ {
 
-		b := make([]byte, tokenlength)
-		for i := range b {
-			b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
-
-		}
-		str := string(b[:])
-		exp := time.Now().Add(time.Minute * 5)
-		ergebnis[loop] = Result{str, exp}
+	b := make([]byte, tokenlength)
+	for i := range b {
+		b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
 
 	}
+	str := string(b[:])
+	exp := time.Now().Add(qex)
+	ergebnis = Result{str, exp}
+
+	//}
 	q.IndentedJSON(200, ergebnis)
 }
