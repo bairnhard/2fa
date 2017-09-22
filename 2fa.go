@@ -3,12 +3,15 @@ package main
 // 2fa = two factor authentication service
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/ttacon/libphonenumber"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,10 +22,29 @@ const smalletters = "abcdefghijklmnopqrstuvwxyz"
 const nums = "0123456789"
 const symbols = "!@#$%^&*()-_=+,.?/:;{}[]`~"
 
-type Result struct {
+type Result struct { //this is how the token looks like
 	Token  string    `json:"token"`
 	Expiry time.Time `json:"expiry"`
 }
+
+type SMS4amsg struct {
+	Messages []struct {
+		Recipients []struct {
+			Dst string `json:"dst"`
+		} `json:"recipients"`
+		Text string `json:"text"`
+	} `json:"messages"`
+}
+
+/* type SMS4amsg struct { //sms message struct
+	Messages struct {
+		Text       string `json:"text"`
+		Recipients struct {
+			Dst string `json:"dst"`
+		} `json:"recipients"`
+	} `json:"messages"`
+}
+*/
 
 func main() {
 
@@ -39,17 +61,65 @@ func main() {
 
 func sendmessage(dest *gin.Context) {
 
-	destnum, _ := dest.GetQuery("dest") //destination number
-	//TODO mobile number validation
+	//SMS4A Credentials
+	url := "https://sms4a.retarus.com/rest/v1/"
+	rUser := "bernhard.hecker@retarus.de"
+	rPwd := ".Retarus1"
+	data := []byte(rUser + ":" + rPwd)
+	rCred := base64.StdEncoding.EncodeToString(data) //encoded credentials
+	fmt.Println(rCred)
 
-	status, err := http.Get("https://sms4a.retarus.com/rest/v1/version")
+	//Query Parameter and Number Handling
+	destnum, _ := dest.GetQuery("dest") //destination number
+
+	destnumvalid, err := libphonenumber.Parse(destnum, "DE") //validate phone number
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
-	fmt.Println(status)
-	fmt.Println(destnum)
+
+	// formattedNum := libphonenumber.Format(destnumvalid, libphonenumber.INTERNATIONAL)
+
+	i := libphonenumber.GetNumberType(destnumvalid)
+
+	if i != libphonenumber.MOBILE {
+		log.Println(time.Now(), "Not Mobile Number: ", destnumvalid)
+	}
+
+	//here we should either have a valid mobile number or leave the show...
+
+	//is retarus online?
+	status, err := http.Get(url + "version")
+	if err != nil {
+		log.Println(time.Now(), err)
+	}
+	defer status.Body.Close()
+
+	// fmt.Println(status)
+	// fmt.Println(destnum)
 	dest.String(200, "%v", status)
 
+	//http post message
+	var msg SMS4amsg
+
+	msg = SMS4amsg{messages: {text: "hello", destnum: {dst: destnum}}}
+
+	dest.IndentedJSON(200, msg)
+
+	client := &http.Client{}
+
+	req, err := http.NewRequest("POST", url+"jobs", nil)
+	if err != nil {
+		log.Println(time.Now(), err)
+	}
+	req.SetBasicAuth(rUser, rPwd)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(time.Now(), err)
+	}
+	fmt.Println("request :", resp)
+
+	defer req.Body.Close()
 }
 
 func maketoken(q *gin.Context) {
