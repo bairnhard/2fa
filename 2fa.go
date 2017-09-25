@@ -14,12 +14,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ttacon/libphonenumber"
-
-	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"         //REST Framework
+	"github.com/go-redis/redis"        //redis cache client
+	"github.com/ttacon/libphonenumber" //Googles phone number management library
 )
 
-// const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+// We chose from these letters, based on the token type we have to generate
 const capletters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const smalletters = "abcdefghijklmnopqrstuvwxyz"
 const nums = "0123456789"
@@ -30,6 +30,7 @@ type Result struct { //this is how the token looks like
 	Expiry time.Time `json:"expiry"`
 }
 
+// structs for SMS4A API - a little complicated because it allows several messages in a call and several recipients per message
 type Recipients struct {
 	Dst string `json:"dst"`
 }
@@ -44,19 +45,28 @@ type SMS4amsg struct {
 
 func main() {
 
-	log.Println(time.Now(), "2fa started")
+	/* usage:
+	http://localhost:8080/send/?dest=017615528046
+	http://localhost:8080/token/&type="string"&length=8&exp=5
 
+	supported types: string, lstring, ustring, numbers, symbol
+	exp: expiry in minutes
+	length: default 5 - max 25
+
+	*/
+
+	log.Println(time.Now(), "2fa started")
+	RClient := initcache() //Redis.Client
 	router := gin.Default()
 
-	router.GET("/token", maketoken) //token generator
-
+	// router.GET("/token", maketoken)  //token generator
+	//router.GET("/cachetest", initcache) //play with redis
 	router.GET("/send", sendmessage) //send token via SMS4A
-
 	router.Run()
 }
 
 func sendmessage(dest *gin.Context) {
-
+	// Sends a Text message via retarus SMS for Applications REST API V1
 	//SMS4A Credentials
 	url := "https://sms4a.retarus.com/rest/v1/"
 	rUser := "bernhard.hecker@retarus.de"
@@ -64,6 +74,10 @@ func sendmessage(dest *gin.Context) {
 	data := []byte(rUser + ":" + rPwd)
 	rCred := base64.StdEncoding.EncodeToString(data) //encoded credentials
 	fmt.Println(rCred)
+
+	//generating token:
+
+	token := maketoken("5", "5", "numbers")
 
 	//Query Parameter and Number Handling
 	destnum, _ := dest.GetQuery("dest") //destination number
@@ -140,15 +154,23 @@ func sendmessage(dest *gin.Context) {
 
 }
 
-func maketoken(q *gin.Context) {
+func maketoken(qlen string, qexp string, qtype string) struct {
 
-	qlen, _ := q.GetQuery("length") //how long should it be
+	/*qlen, _ := q.GetQuery("length") //how long should it be
 	qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
 	qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
+	*/
+	//defaults
+	dqtype := smalletters
+	dlength := 5
+	dexp := 5
 
-	qex, _ := time.ParseDuration(qexp)
-	if qexp == "" {
-		qex = 5 * time.Minute
+	qex, err := time.ParseDuration(qexp)
+	if err != nil {
+		log.Println(time.Now(), err)
+	}
+	if qex == 0 {
+		qex = time.Duration(dexp) * time.Minute //default 5 minutes
 	}
 
 	var LetterBytes string
@@ -156,16 +178,17 @@ func maketoken(q *gin.Context) {
 	switch qtype {
 	case "string":
 		LetterBytes = capletters + smalletters
-
 	case "lstring":
 		LetterBytes = smalletters
-
 	case "ustring":
 		LetterBytes = capletters
 	case "numbers":
 		LetterBytes = nums
 	case "symbol":
 		LetterBytes = symbols + smalletters + capletters
+	default:
+		LetterBytes = dqtype // if something goes wrong, we just generate a token instead of throwing an error
+		log.Println(time.Now(), "Incorrect type query parameter: ", qtype)
 	}
 
 	tokenlength, err := strconv.Atoi(qlen)
@@ -173,17 +196,22 @@ func maketoken(q *gin.Context) {
 		log.Println(time.Now(), "Incorrect length query parameter: ", err)
 	}
 
+	if tokenlength > 25 { //max 25
+		tokenlength = 25
+	}
+
+	if tokenlength < 1 { // just in case: set to default
+		tokenlength = dlength
+	}
+
 	//tests
 	fmt.Println("len: ", tokenlength)
 	fmt.Println("type: ", qtype)
 	fmt.Println("LetterBytes", LetterBytes)
 	fmt.Println("lifespan: ", qex)
-	// const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 	var ergebnis Result
 	// ergebnis = make([]Result, 10)
-
-	// for loop := 0; loop < 10; loop++ {
 
 	b := make([]byte, tokenlength)
 	for i := range b {
@@ -194,6 +222,55 @@ func maketoken(q *gin.Context) {
 	exp := time.Now().Add(qex)
 	ergebnis = Result{str, exp}
 
-	//}
-	q.IndentedJSON(200, ergebnis)
+	// q.IndentedJSON(200, ergebnis)
+
+	return ergebnis
 }
+
+func storekey(key string) {
+	//Todo store a key in the cache
+
+}
+
+func initcache() redis.Client {
+
+	//todo initialize cache
+	// Host ret2fa.redis.cache.windows.net
+	client := redis.NewClient(&redis.Options{
+		Addr:     "ret2fa.redis.cache.windows.net:6379",
+		Password: "LvwurUoZrmSbozrEINuztX7PsLTI0ZUFw05gz8UoeGs=", // Password
+		DB:       0,                                              // use default DB
+	})
+
+	pong, err := client.Ping().Result()
+	fmt.Println(pong, err)
+
+	Client := *client
+
+	return Client
+	/*
+		err = client.Set("key", urrrl, 0).Err()
+		if err != nil {
+			panic(err)
+		}
+
+		val, err := client.Get("key").Result()
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("key", val)
+
+		val2, err := client.Get("key2").Result()
+		if err == redis.Nil {
+			fmt.Println("key2 does not exists")
+		} else if err != nil {
+			panic(err)
+		} else {
+			fmt.Println("key2", val2)
+		}
+	*/
+}
+
+//func getkey (token string) keyexists {
+//TODO find key and return bool
+//}
