@@ -160,6 +160,7 @@ func maketoken(qlen string, qexp string, qtype string) struct {
 	qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
 	qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
 	*/
+
 	//defaults
 	dqtype := smalletters
 	dlength := 5
@@ -169,6 +170,7 @@ func maketoken(qlen string, qexp string, qtype string) struct {
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
+	
 	if qex == 0 {
 		qex = time.Duration(dexp) * time.Minute //default 5 minutes
 	}
