@@ -1,6 +1,7 @@
 package main
 
 // 2fa = two factor authentication service
+// Author: Bernhard Hecker
 
 import (
 	"bytes"
@@ -26,8 +27,12 @@ const nums = "0123456789"
 const symbols = "!@#$%^&*()-_=+,.?/:;{}[]`~"
 
 type Result struct { //this is how the token looks like
-	Token  string    `json:"token"`
-	Expiry time.Time `json:"expiry"`
+	Token  string        `json:"token"`
+	Expiry time.Duration `json:"expiry"`
+}
+
+type Jobid struct { //retarus SMS jobid
+	JobId string
 }
 
 // structs for SMS4A API - a little complicated because it allows several messages in a call and several recipients per message
@@ -43,10 +48,13 @@ type SMS4amsg struct {
 	Mmessages []Messages `json:"messages"`
 }
 
+var RClient redis.Client
+
 func main() {
 
 	/* usage:
-	http://localhost:8080/send/?dest=017615528046
+	http://localhost:8080/send/?dest=017615528046&type="string"&length=8&exp=5
+
 	http://localhost:8080/token/&type="string"&length=8&exp=5
 
 	supported types: string, lstring, ustring, numbers, symbol
@@ -56,12 +64,12 @@ func main() {
 	*/
 
 	log.Println(time.Now(), "2fa started")
-	RClient := initcache() //Redis.Client
+	RClient = initcache()            //Redis.Client
+	rand.Seed(time.Now().UnixNano()) //make random random
 	router := gin.Default()
 
-	// router.GET("/token", maketoken)  //token generator
-	//router.GET("/cachetest", initcache) //play with redis
 	router.GET("/send", sendmessage) //send token via SMS4A
+	router.GET("/check", checktoken) //validate token
 	router.Run()
 }
 
@@ -76,21 +84,16 @@ func sendmessage(dest *gin.Context) {
 	fmt.Println(rCred)
 
 	//generating token:
-
-	token := maketoken("5", "5", "numbers")
+	token := maketoken(dest)
 
 	//Query Parameter and Number Handling
-	destnum, _ := dest.GetQuery("dest") //destination number
-
+	destnum, _ := dest.GetQuery("dest")                      //destination number
 	destnumvalid, err := libphonenumber.Parse(destnum, "DE") //validate phone number
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
 
-	// formattedNum := libphonenumber.Format(destnumvalid, libphonenumber.INTERNATIONAL)
-
 	i := libphonenumber.GetNumberType(destnumvalid)
-
 	if i != libphonenumber.MOBILE {
 		log.Println(time.Now(), "Not Mobile Number: ", destnumvalid)
 	}
@@ -111,8 +114,9 @@ func sendmessage(dest *gin.Context) {
 
 	// Building SMS Message
 	arecipient := []Recipients{{destnum}}
-	amessages := []Messages{{"Ich kann SMS per API schicken...", arecipient}} //this is the SMS Json Object
+	amessages := []Messages{{"Your token is: " + token.Token, arecipient}}
 	asms := SMS4amsg{amessages}
+
 	fmt.Println("arecipient:", arecipient)
 	fmt.Println("amessages:", amessages)
 	fmt.Println("sms:", asms)
@@ -126,10 +130,10 @@ func sendmessage(dest *gin.Context) {
 
 	req, err := http.NewRequest("POST", url+"jobs", bytes.NewBuffer(jsonStr))
 	fmt.Println(req)
-
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
+
 	req.SetBasicAuth(rUser, rPwd) //we're precise and set all neccessary headers, just in case
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("charset", "utf-8")
@@ -145,21 +149,33 @@ func sendmessage(dest *gin.Context) {
 	//http response...
 	defer req.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	bd := string(body[:])
-	log.Println(time.Now(), "JobID: ", bd)
-
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
 
+	bd := string(body[:])
+	log.Println(time.Now(), "JobID: ", bd)
+	log.Println(time.Now(), "Body: ", body)
+
+	var bdj Jobid
+
+	errr := json.Unmarshal(body, &bdj)
+	if errr != nil {
+		log.Println(time.Now(), errr)
+	}
+	fmt.Println(" BDJ.Jobid: ", bdj.JobId)
+
+	storetoken(token, bdj.JobId, RClient)
+
+	dest.IndentedJSON(200, bdj)
+
 }
 
-func maketoken(qlen string, qexp string, qtype string) struct {
-
-	/*qlen, _ := q.GetQuery("length") //how long should it be
+//func maketoken(qlen string, qexp string, qtype string) Result {
+func maketoken(q *gin.Context) Result {
+	qlen, _ := q.GetQuery("length") //how long should it be
 	qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
 	qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
-	*/
 
 	//defaults
 	dqtype := smalletters
@@ -167,10 +183,11 @@ func maketoken(qlen string, qexp string, qtype string) struct {
 	dexp := 5
 
 	qex, err := time.ParseDuration(qexp)
+
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
-	
+
 	if qex == 0 {
 		qex = time.Duration(dexp) * time.Minute //default 5 minutes
 	}
@@ -221,58 +238,61 @@ func maketoken(qlen string, qexp string, qtype string) struct {
 
 	}
 	str := string(b[:])
-	exp := time.Now().Add(qex)
-	ergebnis = Result{str, exp}
+	// exp := time.Now().Add(qex)
+	ergebnis = Result{str, qex}
 
 	// q.IndentedJSON(200, ergebnis)
 
 	return ergebnis
 }
 
-func storekey(key string) {
-	//Todo store a key in the cache
-
-}
-
 func initcache() redis.Client {
 
-	//todo initialize cache
-	// Host ret2fa.redis.cache.windows.net
+	//Initializes cache connection
+
 	client := redis.NewClient(&redis.Options{
 		Addr:     "ret2fa.redis.cache.windows.net:6379",
 		Password: "LvwurUoZrmSbozrEINuztX7PsLTI0ZUFw05gz8UoeGs=", // Password
 		DB:       0,                                              // use default DB
 	})
 
-	pong, err := client.Ping().Result()
-	fmt.Println(pong, err)
+	log.Println(time.Now(), "redis connection established")
 
 	Client := *client
 
 	return Client
-	/*
-		err = client.Set("key", urrrl, 0).Err()
-		if err != nil {
-			panic(err)
-		}
 
-		val, err := client.Get("key").Result()
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println("key", val)
-
-		val2, err := client.Get("key2").Result()
-		if err == redis.Nil {
-			fmt.Println("key2 does not exists")
-		} else if err != nil {
-			panic(err)
-		} else {
-			fmt.Println("key2", val2)
-		}
-	*/
 }
 
-//func getkey (token string) keyexists {
-//TODO find key and return bool
-//}
+func storetoken(token Result, key string, RClient redis.Client) {
+
+	err := RClient.Set(key, token.Token, token.Expiry).Err()
+	if err != nil {
+		panic(err)
+	}
+	/*
+		val, err := RClient.Get(key).Result()
+		if err != nil {
+			panic(err)
+		}
+		 fmt.Println(key, val)*/
+}
+
+func checktoken(req *gin.Context) {
+
+	token, _ := req.GetQuery("token")
+	key, _ := req.GetQuery("id")
+
+	val, err := RClient.Get(key).Result()
+	if err != nil {
+		log.Println(err)
+	}
+	fmt.Println(key, val)
+
+	if val == token {
+		req.IndentedJSON(200, "success")
+	} else {
+		req.IndentedJSON(200, "faliure")
+	}
+
+}
