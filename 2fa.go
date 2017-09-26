@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -100,26 +101,14 @@ func sendmessage(dest *gin.Context) {
 
 	//here we should either have a valid mobile number or leave the show...
 
-	//is retarus online?
-	status, err := http.Get(url + "version")
-	if err != nil {
-		log.Println(time.Now(), err)
-	}
-	defer status.Body.Close()
-
-	if status.StatusCode != 200 {
-		log.Fatalln(time.Now(), "SMS Rest API Error, Status code: ", status.StatusCode)
-	}
-	// dest.String(200, "%v", status)
-
 	// Building SMS Message
 	arecipient := []Recipients{{destnum}}
 	amessages := []Messages{{"Your token is: " + token.Token, arecipient}}
 	asms := SMS4amsg{amessages}
 
-	fmt.Println("arecipient:", arecipient)
-	fmt.Println("amessages:", amessages)
-	fmt.Println("sms:", asms)
+	/*	fmt.Println("arecipient:", arecipient)
+		fmt.Println("amessages:", amessages)
+		fmt.Println("sms:", asms) */
 
 	//http post message
 	// first we build the request
@@ -171,8 +160,7 @@ func sendmessage(dest *gin.Context) {
 
 }
 
-//func maketoken(qlen string, qexp string, qtype string) Result {
-func maketoken(q *gin.Context) Result {
+func maketoken(q *gin.Context) Result { //generates token
 	qlen, _ := q.GetQuery("length") //how long should it be
 	qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
 	qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
@@ -223,32 +211,21 @@ func maketoken(q *gin.Context) Result {
 		tokenlength = dlength
 	}
 
-	//tests
-	fmt.Println("len: ", tokenlength)
-	fmt.Println("type: ", qtype)
-	fmt.Println("LetterBytes", LetterBytes)
-	fmt.Println("lifespan: ", qex)
-
 	var ergebnis Result
-	// ergebnis = make([]Result, 10)
 
 	b := make([]byte, tokenlength)
 	for i := range b {
 		b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
-
 	}
-	str := string(b[:])
-	// exp := time.Now().Add(qex)
-	ergebnis = Result{str, qex}
 
-	// q.IndentedJSON(200, ergebnis)
+	//str := string(b[:])
+
+	ergebnis = Result{string(b[:]), qex}
 
 	return ergebnis
 }
 
-func initcache() redis.Client {
-
-	//Initializes cache connection
+func initcache() redis.Client { //Initializes cache connection
 
 	client := redis.NewClient(&redis.Options{
 		Addr:     "ret2fa.redis.cache.windows.net:6379",
@@ -264,23 +241,21 @@ func initcache() redis.Client {
 
 }
 
-func storetoken(token Result, key string, RClient redis.Client) {
+func storetoken(token Result, key string, RClient redis.Client) { //stores token and key in redis
 
-	err := RClient.Set(key, token.Token, token.Expiry).Err()
+	err := RClient.Set(key, hash(token.Token), token.Expiry).Err()
 	if err != nil {
-		panic(err)
+		log.Println(time.Now(), "redis store error: ", err)
 	}
-	/*
-		val, err := RClient.Get(key).Result()
-		if err != nil {
-			panic(err)
-		}
-		 fmt.Println(key, val)*/
+
 }
 
 func checktoken(req *gin.Context) {
 
 	token, _ := req.GetQuery("token")
+	hval := hash(token)
+	fmt.Println(hval)
+
 	key, _ := req.GetQuery("id")
 
 	val, err := RClient.Get(key).Result()
@@ -289,14 +264,16 @@ func checktoken(req *gin.Context) {
 	}
 	fmt.Println(key, val)
 
-	if val == token {
-		req.IndentedJSON(200, "success")
+	if val == string(hval[:]) {
+		req.IndentedJSON(200, "true")
 	} else {
-		req.IndentedJSON(200, "faliure")
+		req.IndentedJSON(200, "false")
 	}
 
 }
 
-func hash(key string) string {
-
+func hash(key string) []byte {
+	h := sha256.New()
+	h.Write([]byte(key))
+	return h.Sum(nil)
 }
