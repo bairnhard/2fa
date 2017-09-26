@@ -296,3 +296,7 @@ func checktoken(req *gin.Context) {
 	}
 
 }
+
+func hash(key string) string {
+
+}
