@@ -15,10 +15,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"         //REST Framework
-	"github.com/go-redis/redis"        //redis cache client
-	"github.com/ttacon/libphonenumber" //Googles phone number management library
-	"gopkg.in/yaml.v2"                 //YAML Parser for external configuration
+	"github.com/gin-gonic/gin"  //REST Framework
+	"github.com/go-redis/redis" //redis cache client
+	//Googles phone number management library
+	"github.com/nyaruka/phonenumbers" //newer rewrite of lobphonenumber
+	"gopkg.in/yaml.v2"                //YAML Parser for external configuration
 )
 
 // We chose from these letters, based on the token type we have to generate
@@ -116,14 +117,14 @@ func sendmessage(dest *gin.Context) {
 	token := maketoken(dest)
 
 	//Query Parameter and Number Handling
-	destnum, _ := dest.GetQuery("dest")                      //destination number
-	destnumvalid, err := libphonenumber.Parse(destnum, "DE") //validate phone number
+	destnum, _ := dest.GetQuery("dest")                    //destination number
+	destnumvalid, err := phonenumbers.Parse(destnum, "DE") //validate phone number
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
 
-	i := libphonenumber.GetNumberType(destnumvalid)
-	if i != libphonenumber.MOBILE {
+	i := phonenumbers.GetNumberType(destnumvalid)
+	if i != phonenumbers.MOBILE {
 		log.Println(time.Now(), "Not Mobile Number: ", destnumvalid)
 		dest.IndentedJSON(500, "Not mobile number")
 		return
