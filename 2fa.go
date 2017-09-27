@@ -6,7 +6,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -19,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"         //REST Framework
 	"github.com/go-redis/redis"        //redis cache client
 	"github.com/ttacon/libphonenumber" //Googles phone number management library
+	"gopkg.in/yaml.v2"                 //YAML Parser for external configuration
 )
 
 // We chose from these letters, based on the token type we have to generate
@@ -26,6 +26,17 @@ const capletters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const smalletters = "abcdefghijklmnopqrstuvwxyz"
 const nums = "0123456789"
 const symbols = "!@#$%^&*()-_=+,.?/:;{}[]`~"
+
+type Conf struct { //This stores the config
+	Rhost              string        `yaml:"rhost"` //redis host
+	Rpass              string        `yaml:"rpass"` //redis password
+	Suser              string        `yaml:"suser"` //SMS User
+	Spass              string        `yaml:"spass"` //SMS Password
+	DefaultTokenLength int           `yaml:"detaulttokenlength"`
+	DefaulTokentExpiry time.Duration `yaml:"defaultokentexpiry"`
+	MaxTokenLength     int           `yaml:"maxtokenlength"`
+	Messageprefix      string        `yaml:"messageprefix"`
+}
 
 type Result struct { //this is how the token looks like
 	Token  string        `json:"token"`
@@ -50,6 +61,7 @@ type SMS4amsg struct {
 }
 
 var RClient redis.Client
+var Cfg Conf
 
 func main() {
 
@@ -65,6 +77,9 @@ func main() {
 	*/
 
 	log.Println(time.Now(), "2fa started")
+	readconfig()
+
+	//several things need to me initialized here...
 	RClient = initcache()            //Redis.Client
 	rand.Seed(time.Now().UnixNano()) //make random random
 	router := gin.Default()
@@ -74,15 +89,28 @@ func main() {
 	router.Run()
 }
 
+func readconfig() {
+
+	//config File Handling
+	confFile, err := ioutil.ReadFile("2fa.cfg")
+	if err != nil {
+		log.Println(err)
+	}
+
+	err = yaml.Unmarshal(confFile, &Cfg)
+	if err != nil {
+		log.Println("yaml error: ", err)
+	}
+}
+
 func sendmessage(dest *gin.Context) {
 	// Sends a Text message via retarus SMS for Applications REST API V1
 	//SMS4A Credentials
 	url := "https://sms4a.retarus.com/rest/v1/"
-	rUser := "bernhard.hecker@retarus.de"
-	rPwd := ".Retarus1"
-	data := []byte(rUser + ":" + rPwd)
-	rCred := base64.StdEncoding.EncodeToString(data) //encoded credentials
-	fmt.Println(rCred)
+	rUser := Cfg.Suser
+	rPwd := Cfg.Spass
+	//	data := []byte(rUser + ":" + rPwd)
+	//	rCred := base64.StdEncoding.EncodeToString(data) //encoded credentials
 
 	//generating token:
 	token := maketoken(dest)
@@ -97,13 +125,15 @@ func sendmessage(dest *gin.Context) {
 	i := libphonenumber.GetNumberType(destnumvalid)
 	if i != libphonenumber.MOBILE {
 		log.Println(time.Now(), "Not Mobile Number: ", destnumvalid)
+		dest.IndentedJSON(500, "Not mobile number")
+		return
 	}
 
 	//here we should either have a valid mobile number or leave the show...
 
 	// Building SMS Message
 	arecipient := []Recipients{{destnum}}
-	amessages := []Messages{{"Your token is: " + token.Token, arecipient}}
+	amessages := []Messages{{Cfg.Messageprefix + token.Token, arecipient}}
 	asms := SMS4amsg{amessages}
 
 	/*	fmt.Println("arecipient:", arecipient)
@@ -167,8 +197,8 @@ func maketoken(q *gin.Context) Result { //generates token
 
 	//defaults
 	dqtype := smalletters
-	dlength := 5
-	dexp := 5
+	dlength := Cfg.DefaultTokenLength // Config Parameter
+	dexp := Cfg.DefaulTokentExpiry
 
 	qex, err := time.ParseDuration(qexp)
 
@@ -177,7 +207,7 @@ func maketoken(q *gin.Context) Result { //generates token
 	}
 
 	if qex == 0 {
-		qex = time.Duration(dexp) * time.Minute //default 5 minutes
+		qex = time.Duration(dexp) * time.Minute // set default
 	}
 
 	var LetterBytes string
@@ -203,8 +233,8 @@ func maketoken(q *gin.Context) Result { //generates token
 		log.Println(time.Now(), "Incorrect length query parameter: ", err)
 	}
 
-	if tokenlength > 25 { //max 25
-		tokenlength = 25
+	if tokenlength > Cfg.MaxTokenLength { //max 25
+		tokenlength = Cfg.MaxTokenLength
 	}
 
 	if tokenlength < 1 { // just in case: set to default
@@ -218,8 +248,6 @@ func maketoken(q *gin.Context) Result { //generates token
 		b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
 	}
 
-	//str := string(b[:])
-
 	ergebnis = Result{string(b[:]), qex}
 
 	return ergebnis
@@ -228,9 +256,9 @@ func maketoken(q *gin.Context) Result { //generates token
 func initcache() redis.Client { //Initializes cache connection
 
 	client := redis.NewClient(&redis.Options{
-		Addr:     "ret2fa.redis.cache.windows.net:6379",
-		Password: "LvwurUoZrmSbozrEINuztX7PsLTI0ZUFw05gz8UoeGs=", // Password
-		DB:       0,                                              // use default DB
+		Addr:     Cfg.Rhost,
+		Password: Cfg.Rpass,
+		DB:       0, // use default DB
 	})
 
 	log.Println(time.Now(), "redis connection established")
