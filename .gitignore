@@ -29,3 +29,9 @@ _testmain.go
 # External packages folder
 vendor/
 debug
+.vs/ProjectSettings.json
+.vs/slnx.sqlite
+.vs/VSWorkspaceState.json
+.vs/2fa/v15/.suo
+.vs/config/applicationhost.config
+debug

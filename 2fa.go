@@ -12,7 +12,10 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"  //REST Framework
@@ -37,6 +40,7 @@ type Conf struct { //This stores the config
 	DefaulTokentExpiry time.Duration `yaml:"defaultokentexpiry"`
 	MaxTokenLength     int           `yaml:"maxtokenlength"`
 	Messageprefix      string        `yaml:"messageprefix"`
+	HTTPPort           string        `yaml:"httpport"`
 }
 
 type Result struct { //this is how the token looks like
@@ -80,14 +84,34 @@ func main() {
 	log.Println(time.Now(), "2fa started")
 	readconfig()
 
-	//several things need to me initialized here...
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt)
+
+	go func() {
+		select {
+		case sig := <-c:
+			fmt.Printf("Got %s signal. Aborting...\n", sig)
+			os.Exit(1)
+		}
+	}()
+
+	//several things need to be initialized here...
 	RClient = initcache()            //Redis.Client
 	rand.Seed(time.Now().UnixNano()) //make random random
 	router := gin.Default()
 
+	router.LoadHTMLFiles("index.html")
+	router.GET("/", usage)
 	router.GET("/send", sendmessage) //send token via SMS4A
 	router.GET("/check", checktoken) //validate token
-	router.Run()
+
+	router.Run(":" + Cfg.HTTPPort)
+}
+
+func usage(c *gin.Context) {
+
+	c.HTML(http.StatusOK, "index.html", nil)
+
 }
 
 func readconfig() {
@@ -100,7 +124,7 @@ func readconfig() {
 
 	err = yaml.Unmarshal(confFile, &Cfg)
 	if err != nil {
-		log.Println("yaml error: ", err)
+		log.Println(time.Now(), "yaml error: ", err)
 	}
 }
 
@@ -110,8 +134,6 @@ func sendmessage(dest *gin.Context) {
 	url := "https://sms4a.retarus.com/rest/v1/"
 	rUser := Cfg.Suser
 	rPwd := Cfg.Spass
-	//	data := []byte(rUser + ":" + rPwd)
-	//	rCred := base64.StdEncoding.EncodeToString(data) //encoded credentials
 
 	//generating token:
 	token := maketoken(dest)
@@ -124,22 +146,23 @@ func sendmessage(dest *gin.Context) {
 	}
 
 	i := phonenumbers.GetNumberType(destnumvalid)
-	if i != phonenumbers.MOBILE {
+	if i != phonenumbers.MOBILE && i != phonenumbers.FIXED_LINE_OR_MOBILE { //either mobile or somewhat unknown
 		log.Println(time.Now(), "Not Mobile Number: ", destnumvalid)
 		dest.IndentedJSON(500, "Not mobile number")
-		return
+		return //here we should either have a valid mobile number or leave the show...
 	}
 
-	//here we should either have a valid mobile number or leave the show...
-
 	// Building SMS Message
-	arecipient := []Recipients{{destnum}}
-	amessages := []Messages{{Cfg.Messageprefix + token.Token, arecipient}}
-	asms := SMS4amsg{amessages}
+	msgstring, _ := dest.GetQuery("msg")
+	msgs := strings.Split(msgstring, "!TOKEN!")
+	if msgs[0] == "" {
+		msgs[0] = Cfg.Messageprefix
+	}
+	msgstring = msgs[0] + token.Token + " " + msgs[1]
 
-	/*	fmt.Println("arecipient:", arecipient)
-		fmt.Println("amessages:", amessages)
-		fmt.Println("sms:", asms) */
+	arecipient := []Recipients{{destnum}}
+	amessages := []Messages{{msgstring, arecipient}}
+	asms := SMS4amsg{amessages}
 
 	//http post message
 	// first we build the request
@@ -149,7 +172,7 @@ func sendmessage(dest *gin.Context) {
 	}
 
 	req, err := http.NewRequest("POST", url+"jobs", bytes.NewBuffer(jsonStr))
-	fmt.Println(req)
+	//fmt.Println(req)
 	if err != nil {
 		log.Println(time.Now(), err)
 	}
@@ -167,7 +190,7 @@ func sendmessage(dest *gin.Context) {
 	}
 
 	//http response...
-	defer req.Body.Close()
+	//defer req.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Println(time.Now(), err)
@@ -183,7 +206,7 @@ func sendmessage(dest *gin.Context) {
 	if errr != nil {
 		log.Println(time.Now(), errr)
 	}
-	fmt.Println(" BDJ.Jobid: ", bdj.JobId)
+	//fmt.Println(" BDJ.Jobid: ", bdj.JobId)
 
 	storetoken(token, bdj.JobId, RClient)
 
@@ -283,7 +306,7 @@ func checktoken(req *gin.Context) {
 
 	token, _ := req.GetQuery("token")
 	hval := hash(token)
-	fmt.Println(hval)
+	//fmt.Println(hval)
 
 	key, _ := req.GetQuery("id")
 
