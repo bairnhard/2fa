@@ -76,8 +76,9 @@ func main() {
 	http://localhost:8080/token/&type="string"&length=8&exp=5
 
 	supported types: string, lstring, ustring, numbers, symbol
-	exp: expiry in minutes
-	length: default 5 - max 25
+	exp: expiry in time.Duration
+	length: token length
+	msg: message !TOKEN! will be replaced by token
 
 	*/
 
@@ -100,7 +101,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano()) //make random random
 	router := gin.Default()
 
-	router.LoadHTMLFiles("index.html")
+	router.LoadHTMLFiles("HTMLPage1.html")
 	router.GET("/", usage)
 	router.GET("/send", sendmessage) //send token via SMS4A
 	router.GET("/check", checktoken) //validate token
@@ -110,7 +111,7 @@ func main() {
 
 func usage(c *gin.Context) {
 
-	c.HTML(http.StatusOK, "index.html", nil)
+	c.HTML(http.StatusOK, "HTMLPage1.html", nil)
 
 }
 
