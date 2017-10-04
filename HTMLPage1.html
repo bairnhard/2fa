@@ -6,36 +6,50 @@
     <title></title>
 </head>
 <body>
+    <p>&nbsp;</p>
     <div>
-        <div>
-            <h1>Two Factor Authentication Service</h1>
-        </div>
-        <div>&nbsp;</div>
-        <div>
-            <div>
-                <br />
-                <div>Sends a text message to a given destination and returnd a Job ID.</div>
-                <div>This JobID together with a token can be validated and will then return either "true" or "false"</div>
-                <br />
-                <div>
-                    <h2>Usage:</h2>
-                </div>
-                <br />
-                <div><strong>http://localhost:8080/send</strong></div>
-                <div>Generate Message and Send Token</div>
-                <div> Query Parameters: </div>
-                <div> dest: mobile phone number incl intl dialling prefix</div>
-                <div> exp: token expiry time in duration notation (e.g. 5m or 1h)</div>
-                <div>length: token length (int)</div>
-                <div>msg: text message to be sent - placeholder for the token is !TOKEN!</div>
-                <div> type: token type - numbers, string, lstring, ustring, symbol</div>
-                <div></div>
-                <br />
-                <div><strong>http://localhost:8080/check</strong></div>
-                <div>Check Validity</div>
-            </div>
-        </div>
+    <div>
+    <h1>Two Factor Authentication Service</h1>
     </div>
-</body>
+    <div>Author: Bernhard Hecker (<a href="mailto:bernhard.gecker@retarus.de">bernhard.gecker@retarus.de</a>)</div>
+    <div>Rev: 0.1</div>
+    <div>Date: 10/04/2017</div>
+    <div>
+    <div><br />
+    <div>Sends a text message to a given destination and returns&nbsp;a Job ID.</div>
+    <div>Makes use of retarus&nbsp;<a href="https://www.retarus.com/de/tech-products/sms-services/">SMS for Application Service</a></div>
+    <div>This JobID together with a token can be validated and will then return either "true" or "false"</div>
+    <br />
+    <div>
+    <h2>Usage:</h2>
+    </div>
+    <br />
+    <div><strong>http://localhost:8080/send</strong></div>
+    <div>Generate Message and Send Token</div>
+    <div>&nbsp;</div>
+    <div><strong>Query Parameters:</strong></div>
+    <div style="padding-left: 30px;"><strong>dest</strong>: mobile phone number incl intl dialling prefix</div>
+    <div style="padding-left: 30px;"><strong>exp</strong>: token expiry time in duration notation (e.g. 5m or 1h)</div>
+    <div style="padding-left: 30px;"><strong>length</strong>: token length (int)</div>
+    <div style="padding-left: 30px;"><strong>msg</strong>: text message to be sent - placeholder for the token is !TOKEN!</div>
+    <div style="padding-left: 30px;"><strong>type</strong>: token type - numbers, string, lstring, ustring, symbol</div>
+    <div>&nbsp;</div>
+    <div><strong>Returns:</strong></div>
+    <div style="padding-left: 30px;">JobID</div>
+    <br />
+    <div><strong>http://localhost:8080/check</strong></div>
+    <div>Check Validity of a token</div>
+    <div>
+    <div>&nbsp;</div>
+    <div><strong>Query Parameters:</strong></div>
+    <div style="padding-left: 30px;"><strong>token</strong>: token that was entered&nbsp;</div>
+    <div style="padding-left: 30px;"><strong>id</strong>: Job ID</div>
+    <div style="padding-left: 30px;">&nbsp;</div>
+    <div><strong>Returns:</strong></div>
+    <div style="padding-left: 30px;">true/false</div>
+    </div>
+    </div>
+    </div>
+    </div>
 </body>
 </html>
