@@ -156,11 +156,11 @@ func sendmessage(dest *gin.Context) {
 
 	// Building SMS Message
 	msgstring, _ := dest.GetQuery("msg")
-	msgs := strings.Split(msgstring, "!TOKEN!")
-	if msgs[0] == "" {
-		msgs[0] = Cfg.Messageprefix
-		msgs[1] = Cfg.Messagesuffix
+	if msgstring == "" {
+		msgstring = Cfg.Messageprefix + "!TOKEN!" + Cfg.Messagesuffix
 	}
+
+	msgs := strings.Split(msgstring, "!TOKEN!")
 	msgstring = msgs[0] + token.Token + " " + msgs[1]
 
 	arecipient := []Recipients{{destnum}}
