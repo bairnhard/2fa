@@ -40,6 +40,7 @@ type Conf struct { //This stores the config
 	DefaulTokentExpiry time.Duration `yaml:"defaultokentexpiry"`
 	MaxTokenLength     int           `yaml:"maxtokenlength"`
 	Messageprefix      string        `yaml:"messageprefix"`
+	Messagesuffix      string        `yaml:"messagesuffix"`
 	HTTPPort           string        `yaml:"httpport"`
 }
 
@@ -158,6 +159,7 @@ func sendmessage(dest *gin.Context) {
 	msgs := strings.Split(msgstring, "!TOKEN!")
 	if msgs[0] == "" {
 		msgs[0] = Cfg.Messageprefix
+		msgs[1] = Cfg.Messagesuffix
 	}
 	msgstring = msgs[0] + token.Token + " " + msgs[1]
 
