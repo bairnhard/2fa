@@ -66,6 +66,11 @@ type SMS4amsg struct {
 	Mmessages []Messages `json:"messages"`
 }
 
+type Postmsg struct {
+	USER     string `json:"user" binding:"required"`
+	PASSWORD string `json:"password" binding:"required"`
+}
+
 var RClient redis.Client
 var Cfg Conf
 
@@ -106,8 +111,18 @@ func main() {
 	router.GET("/", usage)
 	router.GET("/send", sendmessage) //send token via SMS4A
 	router.GET("/check", checktoken) //validate token
+	router.POST("/foo", foo)
 
 	router.Run(":" + Cfg.HTTPPort)
+}
+
+func foo(c *gin.Context) {
+	var login Postmsg
+	c.BindJSON(&login)
+	fmt.Println("User: ", login.USER)
+	fmt.Println("password: ", login.PASSWORD)
+
+	c.JSON(200, gin.H{"status": login.USER})
 }
 
 func usage(c *gin.Context) {
