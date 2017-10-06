@@ -112,9 +112,13 @@ func main() {
 
 	router.LoadHTMLFiles("HTMLPage1.html")
 	router.GET("/", usage)
-	// router.GET("/send", sendmessage) //send token via SMS4A
-	router.GET("/check", checktoken) //validate token
-	router.POST("/tokens", tokens)
+
+	v1 := router.Group("/api/v1")
+	{
+		// router.GET("/send", sendmessage) //send token via SMS4A
+		v1.GET("/check", checktoken) //validate token
+		v1.POST("/tokens", tokens)
+	}
 
 	router.Run(":" + Cfg.HTTPPort)
 }
