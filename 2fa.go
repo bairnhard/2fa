@@ -80,7 +80,7 @@ var Cfg Conf
 func main() {
 
 	/* usage:
-	http://localhost:8080/send/?dest=017615528046&type="string"&length=8&exp=5
+	curl -H "Content-Type: application/json" -X POST -d '{"type":"numbers","exp":"5m","destnum":"017615528046","msg":" Prefix !TOKEN! suffix","length":"8"}' http://172.20.19.122:8181/api/v1/tokens
 
 	http://localhost:8080/token/&type="string"&length=8&exp=5
 
