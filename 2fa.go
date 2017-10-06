@@ -67,8 +67,11 @@ type SMS4amsg struct {
 }
 
 type Postmsg struct {
-	USER     string `json:"user" binding:"required"`
-	PASSWORD string `json:"password" binding:"required"`
+	Length  string `json:"length" binding:"required"`
+	Expiry  string `json:"exp" binding:"required"`
+	Destnum string `json:"destnum" binding:"required"`
+	Type    string `json:"type" binding:"required"`
+	Msg     string `json:"msg" binding:"required"`
 }
 
 var RClient redis.Client
@@ -109,20 +112,25 @@ func main() {
 
 	router.LoadHTMLFiles("HTMLPage1.html")
 	router.GET("/", usage)
-	router.GET("/send", sendmessage) //send token via SMS4A
+	// router.GET("/send", sendmessage) //send token via SMS4A
 	router.GET("/check", checktoken) //validate token
-	router.POST("/foo", foo)
+	router.POST("/tokens", tokens)
 
 	router.Run(":" + Cfg.HTTPPort)
 }
 
-func foo(c *gin.Context) {
-	var login Postmsg
-	c.BindJSON(&login)
-	fmt.Println("User: ", login.USER)
-	fmt.Println("password: ", login.PASSWORD)
+func tokens(c *gin.Context) {
+	var Message Postmsg //this is the json we get posted
+	err := c.BindJSON(&Message)
+	if err != nil {
+		log.Println(time.Now(), err)
+		c.JSON(500, "MSG Error")
+		return
+	}
+	var job Jobid
+	job = sendmessage(Message)
+	c.JSON(200, job)
 
-	c.JSON(200, gin.H{"status": login.USER})
 }
 
 func usage(c *gin.Context) {
@@ -145,7 +153,7 @@ func readconfig() {
 	}
 }
 
-func sendmessage(dest *gin.Context) {
+func sendmessage(Message Postmsg) Jobid {
 	// Sends a Text message via retarus SMS for Applications REST API V1
 	//SMS4A Credentials
 	url := "https://sms4a.retarus.com/rest/v1/"
@@ -153,10 +161,11 @@ func sendmessage(dest *gin.Context) {
 	rPwd := Cfg.Spass
 
 	//generating token:
-	token := maketoken(dest)
+	token := maketoken(Message)
 
 	//Query Parameter and Number Handling
-	destnum, _ := dest.GetQuery("dest")                    //destination number
+	destnum := Message.Destnum
+	//destnum, _ := dest.GetQuery("dest")                    //destination number
 	destnumvalid, err := phonenumbers.Parse(destnum, "DE") //validate phone number
 	if err != nil {
 		log.Println(time.Now(), err)
@@ -165,12 +174,15 @@ func sendmessage(dest *gin.Context) {
 	i := phonenumbers.GetNumberType(destnumvalid)
 	if i != phonenumbers.MOBILE && i != phonenumbers.FIXED_LINE_OR_MOBILE { //either mobile or somewhat unknown
 		log.Println(time.Now(), "Not Mobile Number: ", destnumvalid)
-		dest.IndentedJSON(500, "Not mobile number")
-		return //here we should either have a valid mobile number or leave the show...
+		//Message.IndentedJSON(500, "Not mobile number")
+		var r Jobid
+		r.JobId = "Not mobile Number"
+		return r //here we should either have a valid mobile number or leave the show...
 	}
 
 	// Building SMS Message
-	msgstring, _ := dest.GetQuery("msg")
+	msgstring := Message.Msg
+	//msgstring, _ := dest.GetQuery("msg")
 	if msgstring == "" {
 		msgstring = Cfg.Messageprefix + "!TOKEN!" + Cfg.Messagesuffix
 	}
@@ -227,15 +239,18 @@ func sendmessage(dest *gin.Context) {
 	//fmt.Println(" BDJ.Jobid: ", bdj.JobId)
 
 	storetoken(token, bdj.JobId, RClient)
-
-	dest.IndentedJSON(200, bdj)
+	return bdj
+	//dest.IndentedJSON(200, bdj)
 
 }
 
-func maketoken(q *gin.Context) Result { //generates token
-	qlen, _ := q.GetQuery("length") //how long should it be
-	qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
-	qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
+func maketoken(Message Postmsg) Result { //generates token
+	//qlen, _ := q.GetQuery("length") //how long should it be
+	qlen := Message.Length
+	//qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
+	qtype := Message.Type
+	//qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
+	qexp := Message.Expiry
 
 	//defaults
 	dqtype := smalletters
