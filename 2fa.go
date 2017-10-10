@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -18,20 +19,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"  //REST Framework
-	"github.com/go-redis/redis" //redis cache client
-	//Googles phone number management library
+	"github.com/dgrijalva/jwt-go"     //JWT Implementation
+	"github.com/gin-gonic/gin"        //REST Framework
+	"github.com/go-redis/redis"       //redis cache client
 	"github.com/nyaruka/phonenumbers" //newer rewrite of lobphonenumber
 	"gopkg.in/yaml.v2"                //YAML Parser for external configuration
 )
 
-// We chose from these letters, based on the token type we have to generate
-const capletters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-const smalletters = "abcdefghijklmnopqrstuvwxyz"
-const nums = "0123456789"
-const symbols = "!@#$%^&*()-_=+,.?/:;{}[]`~"
+const (
+	capletters  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	smalletters = "abcdefghijklmnopqrstuvwxyz"
+	nums        = "0123456789"
+	symbols     = "!@#$%^&*()-_=+,.?/:;{}[]`~"
+	cryptokey   = "2@KwsyuX6f5&ZJAoFZkt6gZMEC!lYK!u" //AES Crypto Key
+	privKeyPath = "app.rsa"                          // RSA Private Key file for JWT Token verification
+	pubKeyPath  = "app.rsa.pub"                      //Rsa Public Key file for JWT Token signing
+)
 
-type Conf struct { //This stores the config
+//Conf stores config parameters
+type Conf struct {
 	Rhost              string        `yaml:"rhost"` //redis host
 	Rpass              string        `yaml:"rpass"` //redis password
 	Suser              string        `yaml:"suser"` //SMS User
@@ -44,16 +50,19 @@ type Conf struct { //This stores the config
 	HTTPPort           string        `yaml:"httpport"`
 }
 
+//Result ist the final Token, that we'll store in a jwt
 type Result struct { //this is how the token looks like
-	Token  string        `json:"token"`
-	Expiry time.Duration `json:"expiry"`
+	Token string `json:"token"`
+	//Expiry time.Duration `json:"expiry"`
+	Expiry string `json:"expiry"`
 }
 
+//Jobid is the ID we get back from the SMS Provider
 type Jobid struct { //retarus SMS jobid
 	JobId string
 }
 
-// structs for SMS4A API - a little complicated because it allows several messages in a call and several recipients per message
+// Recipients structs for SMS4A API - a little complicated because it allows several messages in a call and several recipients per message
 type Recipients struct {
 	Dst string `json:"dst"`
 }
@@ -74,15 +83,23 @@ type Postmsg struct {
 	Msg     string `json:"msg" binding:"required"`
 }
 
-var RClient redis.Client
-var Cfg Conf
+//JWTToken will be filled with a JWT Token...
+type JWTToken struct {
+	Token string `json:"token"`
+}
+
+var (
+	verifyKey   *rsa.PublicKey
+	verifyBytes []byte
+	signKey     *rsa.PrivateKey
+	RClient     redis.Client
+	Cfg         Conf
+)
 
 func main() {
 
 	/* usage:
 	curl -H "Content-Type: application/json" -X POST -d '{"type":"numbers","exp":"5m","destnum":"017615528046","msg":" Prefix !TOKEN! suffix","length":"8"}' http://172.20.19.122:8181/api/v1/tokens
-
-	http://localhost:8080/token/&type="string"&length=8&exp=5
 
 	supported types: string, lstring, ustring, numbers, symbol
 	exp: expiry in time.Duration
@@ -108,6 +125,8 @@ func main() {
 	//several things need to be initialized here...
 	RClient = initcache()            //Redis.Client
 	rand.Seed(time.Now().UnixNano()) //make random random
+	initKeys()                       // Initialize RAS Keys
+
 	router := gin.Default()
 
 	router.LoadHTMLFiles("HTMLPage1.html")
@@ -118,6 +137,7 @@ func main() {
 		// router.GET("/send", sendmessage) //send token via SMS4A
 		v1.GET("/check", checktoken) //validate token
 		v1.POST("/tokens", tokens)
+		v1.GET("/jwt", checkjwttoken)
 	}
 
 	router.Run(":" + Cfg.HTTPPort)
@@ -143,22 +163,17 @@ func usage(c *gin.Context) {
 
 }
 
-func readconfig() {
+func readconfig() { //config File Handling
 
-	//config File Handling
 	confFile, err := ioutil.ReadFile("2fa.cfg")
-	if err != nil {
-		log.Println(err)
-	}
+	errlog(err)
 
 	err = yaml.Unmarshal(confFile, &Cfg)
-	if err != nil {
-		log.Println(time.Now(), "yaml error: ", err)
-	}
+	errlog(err)
 }
 
-func sendmessage(Message Postmsg) Jobid {
-	// Sends a Text message via retarus SMS for Applications REST API V1
+func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SMS for Applications REST API V1
+
 	//SMS4A Credentials
 	url := "https://sms4a.retarus.com/rest/v1/"
 	rUser := Cfg.Suser
@@ -166,14 +181,21 @@ func sendmessage(Message Postmsg) Jobid {
 
 	//generating token:
 	token := maketoken(Message)
+	jtoken := makejwttoken(token)
+	fmt.Println("Jwttoken: ", jtoken)
+	//stoken, err := json.Marshal(&token)
+	// errlog(err)
+
+	//jtoken := jwt.EncodeSegment(stoken)
+	//fmt.Println("Jtoken: ", jtoken)
+	/* ttoken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims(stoken))
+	fmt.Println ("kompletter JWT Token: ", ttoken) */
 
 	//Query Parameter and Number Handling
 	destnum := Message.Destnum
 	//destnum, _ := dest.GetQuery("dest")                    //destination number
 	destnumvalid, err := phonenumbers.Parse(destnum, "DE") //validate phone number
-	if err != nil {
-		log.Println(time.Now(), err)
-	}
+	errlog(err)
 
 	i := phonenumbers.GetNumberType(destnumvalid)
 	if i != phonenumbers.MOBILE && i != phonenumbers.FIXED_LINE_OR_MOBILE { //either mobile or somewhat unknown
@@ -201,15 +223,10 @@ func sendmessage(Message Postmsg) Jobid {
 	//http post message
 	// first we build the request
 	jsonStr, errs := json.Marshal(asms)
-	if errs != nil {
-		log.Println(time.Now(), errs)
-	}
+	errlog(errs)
 
 	req, err := http.NewRequest("POST", url+"jobs", bytes.NewBuffer(jsonStr))
-	//fmt.Println(req)
-	if err != nil {
-		log.Println(time.Now(), err)
-	}
+	errlog(err)
 
 	req.SetBasicAuth(rUser, rPwd) //we're precise and set all neccessary headers, just in case
 	req.Header.Set("Content-Type", "application/json")
@@ -219,16 +236,12 @@ func sendmessage(Message Postmsg) Jobid {
 	client := &http.Client{}
 
 	resp, err := client.Do(req)
-	if err != nil {
-		log.Println(time.Now(), err)
-	}
+	errlog(err)
 
 	//http response...
 	//defer req.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Println(time.Now(), err)
-	}
+	errlog(err)
 
 	bd := string(body[:])
 	log.Println(time.Now(), "JobID: ", bd)
@@ -237,9 +250,7 @@ func sendmessage(Message Postmsg) Jobid {
 	var bdj Jobid
 
 	errr := json.Unmarshal(body, &bdj)
-	if errr != nil {
-		log.Println(time.Now(), errr)
-	}
+	errlog(errr)
 	//fmt.Println(" BDJ.Jobid: ", bdj.JobId)
 
 	storetoken(token, bdj.JobId, RClient)
@@ -262,10 +273,7 @@ func maketoken(Message Postmsg) Result { //generates token
 	dexp := Cfg.DefaulTokentExpiry
 
 	qex, err := time.ParseDuration(qexp)
-
-	if err != nil {
-		log.Println(time.Now(), err)
-	}
+	errlog(err)
 
 	if qex == 0 {
 		qex = time.Duration(dexp) * time.Minute // set default
@@ -290,9 +298,7 @@ func maketoken(Message Postmsg) Result { //generates token
 	}
 
 	tokenlength, err := strconv.Atoi(qlen)
-	if err != nil {
-		log.Println(time.Now(), "Incorrect length query parameter: ", err)
-	}
+	errlog(err)
 
 	if tokenlength > Cfg.MaxTokenLength { //max 25
 		tokenlength = Cfg.MaxTokenLength
@@ -308,10 +314,11 @@ func maketoken(Message Postmsg) Result { //generates token
 	for i := range b {
 		b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
 	}
-
-	ergebnis = Result{string(b[:]), qex}
+	qexstring := fmt.Sprintf("%s", qex)
+	ergebnis = Result{string(b[:]), qexstring}
 
 	return ergebnis
+
 }
 
 func initcache() redis.Client { //Initializes cache connection
@@ -332,10 +339,9 @@ func initcache() redis.Client { //Initializes cache connection
 
 func storetoken(token Result, key string, RClient redis.Client) { //stores token and key in redis
 
-	err := RClient.Set(key, hash(token.Token), token.Expiry).Err()
-	if err != nil {
-		log.Println(time.Now(), "redis store error: ", err)
-	}
+	expiryduration, _ := time.ParseDuration(token.Expiry)
+	err := RClient.Set(key, hash(token.Token), expiryduration).Err()
+	errlog(err)
 
 }
 
@@ -348,9 +354,7 @@ func checktoken(req *gin.Context) {
 	key, _ := req.GetQuery("id")
 
 	val, err := RClient.Get(key).Result()
-	if err != nil {
-		log.Println(err)
-	}
+	errlog(err)
 	fmt.Println(key, val)
 
 	if val == string(hval[:]) {
@@ -366,3 +370,62 @@ func hash(key string) []byte {
 	h.Write([]byte(key))
 	return h.Sum(nil)
 }
+
+func errlog(err error) {
+	if err != nil {
+		log.Println(time.Now(), err)
+	}
+}
+
+func initKeys() { //Initialize RAS Keys
+	signBytes, err := ioutil.ReadFile(privKeyPath)
+	errlog(err)
+
+	signKey, err = jwt.ParseRSAPrivateKeyFromPEM(signBytes)
+	errlog(err)
+
+	verifyBytes, err := ioutil.ReadFile(pubKeyPath)
+	errlog(err)
+
+	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM(verifyBytes)
+	errlog(err)
+}
+
+func makejwttoken(c Result) string { //generates a jwt Token
+
+	jt := jwt.New(jwt.SigningMethodRS256)
+	jtclaims := make(jwt.MapClaims)
+	jtclaims["expiry"] = c.Expiry
+	jtclaims["token"] = c.Token
+	jt.Claims = jtclaims
+
+	jtString, err := jt.SignedString(signKey)
+	errlog(err)
+
+	response := JWTToken{jtString}
+	return response.Token
+
+}
+
+func checkjwttoken(c *gin.Context) { //validates a token
+
+	mytoken, _ := c.GetQuery("token")
+	token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
+		return verifyBytes, nil
+	})
+
+	if err == nil && token.Valid {
+		fmt.Println("Your token is valid.  I like your style.")
+		c.JSON(200, token.Valid)
+	} else {
+		fmt.Println("This token is terrible!  I cannot accept this.")
+		c.JSON(200, token.Valid)
+	}
+	fmt.Println("Valid: ", token.Valid)
+	fmt.Println("Claims: ", token.Claims)
+	fmt.Println("Signature: ", token.Signature)
+	fmt.Println("Header: ", token.Header)
+	fmt.Println("Method: ", token.Method)
+}
+
+// }
