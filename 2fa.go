@@ -115,7 +115,7 @@ func main() {
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt)
 
-	go func() {
+	go func() { //Waiting vor program exit ctrl-c
 		select {
 		case sig := <-c:
 			fmt.Printf("Got %s signal. Aborting...\n", sig)
@@ -412,6 +412,7 @@ func checkjwttoken(c *gin.Context) { //validates a token
 
 	mytoken, _ := c.GetQuery("token")
 	token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
+		fmt.Println("VerifyBytes", verifyBytes)
 		return verifyBytes, nil
 	})
 
@@ -427,6 +428,9 @@ func checkjwttoken(c *gin.Context) { //validates a token
 	fmt.Println("Signature: ", token.Signature)
 	fmt.Println("Header: ", token.Header)
 	fmt.Println("Method: ", token.Method)
+	fmt.Println("Token: ", mytoken)
+	fmt.Println("err: ", err)
+
 }
 
 // }
