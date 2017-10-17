@@ -32,8 +32,8 @@ const (
 	nums        = "0123456789"
 	symbols     = "!@#$%^&*()-_=+,.?/:;{}[]`~"
 	cryptokey   = "2@KwsyuX6f5&ZJAoFZkt6gZMEC!lYK!u" //AES Crypto Key
-	privKeyPath = "app.rsa"                          // RSA Private Key file for JWT Token verification
-	pubKeyPath  = "app.rsa.pub"                      //Rsa Public Key file for JWT Token signing
+	//privKeyPath = "app.rsa"                          // RSA Private Key file for JWT Token verification
+	//pubKeyPath  = "app.rsa.pub"                      //Rsa Public Key file for JWT Token signing
 )
 
 //Conf stores config parameters
@@ -48,6 +48,8 @@ type Conf struct {
 	Messageprefix      string        `yaml:"messageprefix"`
 	Messagesuffix      string        `yaml:"messagesuffix"`
 	HTTPPort           string        `yaml:"httpport"`
+	PrivKeyPath        string        `yaml:"privKeyPath"`
+	PubKeyPath         string        `yaml:"pubKeyPath"`
 }
 
 //Result ist the final Token, that we'll store in a jwt
@@ -90,9 +92,9 @@ type JWTToken struct {
 }
 
 var (
-	verifyKey   *rsa.PublicKey
-	verifyBytes []byte
-	signKey     *rsa.PrivateKey
+	VerifyKey   *rsa.PublicKey
+	VerifyBytes []byte
+	SignKey     *rsa.PrivateKey
 	RClient     redis.Client
 	Cfg         Conf
 )
@@ -184,7 +186,7 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 	token := maketoken(Message)
 	jtoken := makejwttoken(token)
 	fmt.Println("Jwttoken: ", jtoken)
-	//stoken, err := json.Marshal(&token)
+	// stoken, err := json.Marshal(&token)
 	// errlog(err)
 
 	//jtoken := jwt.EncodeSegment(stoken)
@@ -240,7 +242,6 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 	errlog(err)
 
 	//http response...
-	//defer req.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	errlog(err)
 
@@ -261,17 +262,15 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 }
 
 func maketoken(Message Postmsg) Result { //generates token
-	//qlen, _ := q.GetQuery("length") //how long should it be
-	qlen := Message.Length
-	//qtype, _ := q.GetQuery("type")  //what kind of token do we want to have?
-	qtype := Message.Type
-	//qexp, _ := q.GetQuery("exp")    //how many minutes does it live?
-	qexp := Message.Expiry
+
+	qlen := Message.Length // Token length
+	qtype := Message.Type  // Token type
+	qexp := Message.Expiry // TTL
 
 	//defaults
 	dqtype := smalletters
-	dlength := Cfg.DefaultTokenLength // Config Parameter
-	dexp := Cfg.DefaulTokentExpiry
+	dlength := Cfg.DefaultTokenLength // Config Parameter default length
+	dexp := Cfg.DefaulTokentExpiry    // config default time to live
 
 	qex, err := time.ParseDuration(qexp)
 	errlog(err)
@@ -280,7 +279,7 @@ func maketoken(Message Postmsg) Result { //generates token
 		qex = time.Duration(dexp) * time.Minute // set default
 	}
 
-	var LetterBytes string
+	var LetterBytes string // building the letter soup, we pick the token content from
 
 	switch qtype {
 	case "string":
@@ -315,8 +314,11 @@ func maketoken(Message Postmsg) Result { //generates token
 	for i := range b {
 		b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
 	}
-	qexstring := fmt.Sprintf("%s", qex)
-	ergebnis = Result{string(b[:]), qexstring}
+	qexstring := fmt.Sprintf("%s", qex) // time to live as string...
+	tokstring := string(b[:])
+	tokhash := hash(tokstring) // Building an SHA256 Hash
+
+	ergebnis = Result{string(tokhash[:]), qexstring}
 
 	return ergebnis
 
@@ -378,17 +380,17 @@ func errlog(err error) {
 	}
 }
 
-func initKeys() { //Initialize RAS Keys
-	signBytes, err := ioutil.ReadFile(privKeyPath)
+func initKeys() { //Initialize RSA Keys
+	SignBytes, err := ioutil.ReadFile(Cfg.PrivKeyPath)
 	errlog(err)
 
-	signKey, err = jwt.ParseRSAPrivateKeyFromPEM(signBytes)
+	SignKey, err = jwt.ParseRSAPrivateKeyFromPEM(SignBytes)
 	errlog(err)
 
-	verifyBytes, err := ioutil.ReadFile(pubKeyPath)
+	VerifyBytes, err := ioutil.ReadFile(Cfg.PubKeyPath)
 	errlog(err)
 
-	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM(verifyBytes)
+	VerifyKey, err = jwt.ParseRSAPublicKeyFromPEM(VerifyBytes)
 	errlog(err)
 }
 
@@ -400,7 +402,7 @@ func makejwttoken(c Result) string { //generates a jwt Token
 	jtclaims["token"] = c.Token
 	jt.Claims = jtclaims
 
-	jtString, err := jt.SignedString(signKey)
+	jtString, err := jt.SignedString(SignKey)
 	errlog(err)
 
 	response := JWTToken{jtString}
@@ -411,9 +413,16 @@ func makejwttoken(c Result) string { //generates a jwt Token
 func checkjwttoken(c *gin.Context) { //validates a token
 
 	mytoken, _ := c.GetQuery("token")
+
+	/* token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
+	fmt.Println("VerifyBytes", VerifyBytes)
+	return VerifyBytes, nil  */
 	token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
-		fmt.Println("VerifyBytes", verifyBytes)
-		return verifyBytes, nil
+		// Don't forget to validate the alg is what you expect:
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+		}
+		return VerifyKey, nil
 	})
 
 	if err == nil && token.Valid {
