@@ -58,6 +58,11 @@ type Result struct { //this is how the token looks like
 	Expiry string `json:"expiry"`
 }
 
+type Postjwt struct { //this is the JSON object we need if we have to validate a pin that gets posted
+	JToken string `json:"jwt"`
+	Pin    string `json:"pin"`
+}
+
 //Jobid is the ID we get back from the SMS Provider
 type Jobid struct { //retarus SMS jobid
 	JobId string
@@ -137,9 +142,10 @@ func main() {
 	v1 := router.Group("/api/v1")
 	{
 
-		v1.GET("/check", checktoken)  //validate token
-		v1.POST("/tokens", tokens)    //create token
-		v1.GET("/jwt", checkjwttoken) //validate jwt token
+		v1.GET("/check", checktoken)   //validate token
+		v1.POST("/tokens", tokens)     //create token
+		v1.GET("/jwt", checkjwttoken)  //validate jwt token
+		v1.POST("/pjwt", postcheckjwt) // check jwt token (posted)
 	}
 
 	router.Run(":" + Cfg.HTTPPort)
@@ -157,6 +163,21 @@ func tokens(c *gin.Context) {
 	var job Jobid
 	job = sendmessage(Message)
 	c.JSON(200, job)
+
+}
+
+//postcheckjwt validates a token, that has been posted
+// we need the jwt and the user input here
+func postcheckjwt(c *gin.Context) {
+	var Message JWTToken // this is the json we get posted
+	err := c.BindJSON(&Message)
+	if err != nil {
+		log.Println(time.Now(), err)
+		c.JSON(500, "MSG Error")
+		return
+	}
+
+	//TODO collect field values and hand over to validate jwt, validate expiry time and validate pin hash vs jwt hash - then return ok or bad...
 
 }
 
