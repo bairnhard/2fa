@@ -54,8 +54,7 @@ type Conf struct {
 
 //Result ist the final Token, that we'll store in a jwt
 type Result struct { //this is how the token looks like
-	Token string `json:"token"`
-	//Expiry time.Duration `json:"expiry"`
+	Token  string `json:"token"`
 	Expiry string `json:"expiry"`
 }
 
@@ -65,7 +64,6 @@ type Jobid struct { //retarus SMS jobid
 }
 
 // Recipients structs for SMS4A API - a little complicated because it allows several messages in a call and several recipients per message
-
 type Recipients struct {
 	Dst string `json:"dst"`
 }
@@ -114,10 +112,11 @@ func main() {
 	log.Println(time.Now(), "2fa started")
 	readconfig()
 
+	//this waits fpr ctrl-c to interrupt the program
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt)
 
-	go func() { //Waiting vor program exit ctrl-c
+	go func() {
 		select {
 		case sig := <-c:
 			fmt.Printf("Got %s signal. Aborting...\n", sig)
@@ -127,7 +126,7 @@ func main() {
 
 	//several things need to be initialized here...
 	RClient = initcache()            //Redis.Client
-	rand.Seed(time.Now().UnixNano()) //make random random
+	rand.Seed(time.Now().UnixNano()) //make random a little more random
 	initKeys()                       // Initialize RAS Keys
 
 	router := gin.Default()
@@ -137,15 +136,16 @@ func main() {
 
 	v1 := router.Group("/api/v1")
 	{
-		// router.GET("/send", sendmessage) //send token via SMS4A
-		v1.GET("/check", checktoken) //validate token
-		v1.POST("/tokens", tokens)
-		v1.GET("/jwt", checkjwttoken)
+
+		v1.GET("/check", checktoken)  //validate token
+		v1.POST("/tokens", tokens)    //create token
+		v1.GET("/jwt", checkjwttoken) //validate jwt token
 	}
 
 	router.Run(":" + Cfg.HTTPPort)
 }
 
+//tokens generates a random token
 func tokens(c *gin.Context) {
 	var Message Postmsg //this is the json we get posted
 	err := c.BindJSON(&Message)
@@ -160,13 +160,15 @@ func tokens(c *gin.Context) {
 
 }
 
+//usage displays a html page as simple documentation for the api
 func usage(c *gin.Context) {
 
 	c.HTML(http.StatusOK, "HTMLPage1.html", nil)
 
 }
 
-func readconfig() { //config File Handling
+//reads config File
+func readconfig() {
 
 	confFile, err := ioutil.ReadFile("2fa.cfg")
 	errlog(err)
@@ -211,7 +213,7 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 
 	// Building SMS Message
 	msgstring := Message.Msg
-	//msgstring, _ := dest.GetQuery("msg")
+
 	if msgstring == "" {
 		msgstring = Cfg.Messageprefix + "!TOKEN!" + Cfg.Messagesuffix
 	}
@@ -308,16 +310,16 @@ func maketoken(Message Postmsg) Result { //generates token
 		tokenlength = dlength
 	}
 
-	var ergebnis Result
-
 	b := make([]byte, tokenlength)
 	for i := range b {
 		b[i] = LetterBytes[rand.Intn(len(LetterBytes))]
 	}
+
 	qexstring := fmt.Sprintf("%s", qex) // time to live as string...
 	tokstring := string(b[:])
 	tokhash := hash(tokstring) // Building an SHA256 Hash
 
+	var ergebnis Result
 	ergebnis = Result{string(tokhash[:]), qexstring}
 
 	return ergebnis
