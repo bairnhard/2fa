@@ -142,9 +142,9 @@ func main() {
 	v1 := router.Group("/api/v1")
 	{
 
-		v1.GET("/check", checktoken)   //validate token
-		v1.POST("/tokens", tokens)     //create token
-		v1.GET("/jwt", checkjwttoken)  //validate jwt token
+		v1.GET("/check", checktoken) //validate token
+		v1.POST("/tokens", tokens)   //create token
+		//v1.GET("/jwt", checkjwttoken)  //validate jwt token
 		v1.POST("/pjwt", postcheckjwt) // check jwt token (posted)
 	}
 
@@ -169,13 +169,15 @@ func tokens(c *gin.Context) {
 //postcheckjwt validates a token, that has been posted
 // we need the jwt and the user input here
 func postcheckjwt(c *gin.Context) {
-	var Message JWTToken // this is the json we get posted
+	var Message Postjwt // this is the json we get posted
 	err := c.BindJSON(&Message)
 	if err != nil {
 		log.Println(time.Now(), err)
 		c.JSON(500, "MSG Error")
 		return
 	}
+
+	// pinhash := hash(Message.Pin) //this is the SHA 265 hash value of the transmitted pin
 
 	//TODO collect field values and hand over to validate jwt, validate expiry time and validate pin hash vs jwt hash - then return ok or bad...
 
@@ -206,8 +208,8 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 	rPwd := Cfg.Spass
 
 	//generating token:
-	token := maketoken(Message)
-	jtoken := makejwttoken(token)
+	pin := makepin(Message)
+	jtoken := makejwttoken(pin)
 	fmt.Println("Jwttoken: ", jtoken)
 	// stoken, err := json.Marshal(&token)
 	// errlog(err)
@@ -240,7 +242,8 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 	}
 
 	msgs := strings.Split(msgstring, "!TOKEN!")
-	msgstring = msgs[0] + token.Token + " " + msgs[1]
+	msgstring = msgs[0] + pin.Token + " " + msgs[1]
+	fmt.Println("Message: ", msgstring)
 
 	arecipient := []Recipients{{destnum}}
 	amessages := []Messages{{msgstring, arecipient}}
@@ -278,13 +281,13 @@ func sendmessage(Message Postmsg) Jobid { // Sends a Text message via retarus SM
 	errlog(errr)
 	//fmt.Println(" BDJ.Jobid: ", bdj.JobId)
 
-	storetoken(token, bdj.JobId, RClient)
+	storetoken(pin, bdj.JobId, RClient)
 	return bdj
 	//dest.IndentedJSON(200, bdj)
 
 }
 
-func maketoken(Message Postmsg) Result { //generates token
+func makepin(Message Postmsg) Result { //generates pin and expiry TS
 
 	qlen := Message.Length // Token length
 	qtype := Message.Type  // Token type
@@ -337,11 +340,11 @@ func maketoken(Message Postmsg) Result { //generates token
 	}
 
 	qexstring := fmt.Sprintf("%s", qex) // time to live as string...
-	tokstring := string(b[:])
-	tokhash := hash(tokstring) // Building an SHA256 Hash
+	//tokstring := string(b[:])
+	//tokhash := hash(tokstring) // Building an SHA256 Hash
 
 	var ergebnis Result
-	ergebnis = Result{string(tokhash[:]), qexstring}
+	ergebnis = Result{string(b[:]), qexstring}
 
 	return ergebnis
 
@@ -433,9 +436,10 @@ func makejwttoken(c Result) string { //generates a jwt Token
 
 }
 
-func checkjwttoken(c *gin.Context) { //validates a token
+func checkjwttoken(mytoken string) { //validates a JWT token
+	// func checkjwttoken(c *gin.Context) { //validates a token
 
-	mytoken, _ := c.GetQuery("token")
+	// mytoken, _ := c.GetQuery("token")
 
 	/* token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
 	fmt.Println("VerifyBytes", VerifyBytes)
@@ -448,13 +452,13 @@ func checkjwttoken(c *gin.Context) { //validates a token
 		return VerifyKey, nil
 	})
 
-	if err == nil && token.Valid {
+	/* if err == nil && token.Valid {
 		fmt.Println("Your token is valid.  I like your style.")
 		c.JSON(200, token.Valid)
 	} else {
 		fmt.Println("This token is terrible!  I cannot accept this.")
 		c.JSON(200, token.Valid)
-	}
+	}*/
 	fmt.Println("Valid: ", token.Valid)
 	fmt.Println("Claims: ", token.Claims)
 	fmt.Println("Signature: ", token.Signature)
