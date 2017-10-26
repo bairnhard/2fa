@@ -424,8 +424,20 @@ func makejwttoken(c Result) string { //generates a jwt Token
 
 	jt := jwt.New(jwt.SigningMethodRS256)
 	jtclaims := make(jwt.MapClaims)
-	jtclaims["expiry"] = c.Expiry
-	jtclaims["token"] = c.Token
+
+	//calculating the expiry TS
+	expduration, err := time.ParseDuration(c.Expiry)
+	errlog(err)
+	pinexpires := time.Now().Add(expduration)
+	//fmt.Println("Expires at: ", pinexpires)
+
+	pinhash := hash(c.Token)
+	pinstr := fmt.Sprintf("%x", pinhash)
+	fmt.Println("Pin String: ", pinstr)
+
+	jtclaims["expiry"] = pinexpires
+	jtclaims["token"] = pinstr
+
 	jt.Claims = jtclaims
 
 	jtString, err := jt.SignedString(SignKey)
