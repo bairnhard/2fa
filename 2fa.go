@@ -177,7 +177,13 @@ func postcheckjwt(c *gin.Context) {
 		return
 	}
 
-	// pinhash := hash(Message.Pin) //this is the SHA 265 hash value of the transmitted pin
+	pinhash := hash(Message.Pin) //this is the SHA 265 hash value of the transmitted pin
+	jtoken := Message.JToken
+
+	checkedpin := checkjwttoken(jtoken)
+
+	fmt.Println("claims: ", checkedpin.Claims)
+	fmt.Println("pinhash: ", pinhash)
 
 	//TODO collect field values and hand over to validate jwt, validate expiry time and validate pin hash vs jwt hash - then return ok or bad...
 
@@ -448,14 +454,8 @@ func makejwttoken(c Result) string { //generates a jwt Token
 
 }
 
-func checkjwttoken(mytoken string) { //validates a JWT token
-	// func checkjwttoken(c *gin.Context) { //validates a token
+func checkjwttoken(mytoken string) *jwt.Token { //validates a JWT token
 
-	// mytoken, _ := c.GetQuery("token")
-
-	/* token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
-	fmt.Println("VerifyBytes", VerifyBytes)
-	return VerifyBytes, nil  */
 	token, err := jwt.Parse(mytoken, func(token *jwt.Token) (interface{}, error) {
 		// Don't forget to validate the alg is what you expect:
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -464,13 +464,6 @@ func checkjwttoken(mytoken string) { //validates a JWT token
 		return VerifyKey, nil
 	})
 
-	/* if err == nil && token.Valid {
-		fmt.Println("Your token is valid.  I like your style.")
-		c.JSON(200, token.Valid)
-	} else {
-		fmt.Println("This token is terrible!  I cannot accept this.")
-		c.JSON(200, token.Valid)
-	}*/
 	fmt.Println("Valid: ", token.Valid)
 	fmt.Println("Claims: ", token.Claims)
 	fmt.Println("Signature: ", token.Signature)
@@ -479,6 +472,8 @@ func checkjwttoken(mytoken string) { //validates a JWT token
 	fmt.Println("Token: ", mytoken)
 	fmt.Println("err: ", err)
 
+	return token
+
 }
 
-// }
+//EOF
